@@ -144,6 +144,10 @@ function qaSlug(value = '') {
     .replace(/^-+|-+$/g, '')
 }
 
+function getMealSlotQa(day, slot) {
+  return `${qaSlug(day)}-${qaSlug(slot)}`
+}
+
 function buildEmptyRecommendation(profile, fridgeIngredients, recipes) {
   const activeConstraints = [
     ...(profile?.dietary_preferences || []),
@@ -197,6 +201,7 @@ export default function DashboardPage() {
   const [error, setError] = useState('')
   const [swapTab, setSwapTab] = useState('All')
   const [showGrocery, setShowGrocery] = useState(false)
+  const plannerBusy = loading || savingSlot || autoPlanning
 
   useEffect(() => { loadData() }, [])
 
@@ -236,26 +241,56 @@ export default function DashboardPage() {
   }
 
   async function handlePickMeal(day, slot, recipe) {
-    setSavingSlot(true)
-    setError('')
     const date = getDayDate(weekStart, DAYS.indexOf(day))
-    const ok = await setMealPlanSlot(date, slot, recipe.id)
-    if (ok) { setShowPicker(null); setShowSwap(null); await loadData() }
-    else setError('Could not save that meal slot.')
-    setSavingSlot(false)
+    await runPlannerMutation(
+      () => setMealPlanSlot(date, slot, recipe.id),
+      'Could not save that meal slot.',
+    )
   }
 
   async function handleClearMeal(day, slot) {
+    const date = getDayDate(weekStart, DAYS.indexOf(day))
+    await runPlannerMutation(
+      () => clearMealPlanSlot(date, slot),
+      'Could not clear that meal slot.',
+      { closeModals: false },
+    )
+  }
+
+  async function runPlannerMutation(action, fallbackMessage, options = {}) {
+    if (savingSlot || autoPlanning) return false
+
+    const { closeModals = true } = options
+
     setSavingSlot(true)
     setError('')
-    const date = getDayDate(weekStart, DAYS.indexOf(day))
-    const ok = await clearMealPlanSlot(date, slot)
-    if (ok) await loadData()
-    else setError('Could not clear that meal slot.')
-    setSavingSlot(false)
+
+    try {
+      const ok = await action()
+
+      if (!ok) {
+        throw new Error(fallbackMessage)
+      }
+
+      await loadData()
+
+      if (closeModals) {
+        setShowPicker(null)
+        setShowSwap(null)
+      }
+
+      return true
+    } catch (mutationError) {
+      setError(mutationError?.message || fallbackMessage)
+      return false
+    } finally {
+      setSavingSlot(false)
+    }
   }
 
   async function handleAutoPlan() {
+    if (plannerBusy) return
+
     setAutoPlanning(true)
     setError('')
     try {
@@ -305,6 +340,8 @@ export default function DashboardPage() {
   }
 
   async function handleSwapMeal(day, slot, meal) {
+    if (plannerBusy) return
+
     setError('')
     try {
       const response = await fetch('/api/planner/swap', {
@@ -321,22 +358,37 @@ export default function DashboardPage() {
   }
 
   async function handleToggleLeftover(day, slot, meal) {
+    if (plannerBusy) return
+
     const date = getDayDate(weekStart, DAYS.indexOf(day))
     const currentMeta = mealMetaMap[`${day}-${slot}`] || {}
     const nextEnabled = !currentMeta.leftovers
-    toggleMealLeftovers(date, slot, nextEnabled, meal)
-    if (nextEnabled) {
-      const dayIndex = DAYS.indexOf(day)
-      const nextDay = DAYS[dayIndex + 1]
-      if (nextDay) { const nextDate = getDayDate(weekStart, dayIndex + 1); await setMealPlanSlot(nextDate, 'Lunch', meal.id) }
-    }
-    await loadData()
+
+    await runPlannerMutation(async () => {
+      toggleMealLeftovers(date, slot, nextEnabled, meal)
+
+      if (nextEnabled) {
+        const dayIndex = DAYS.indexOf(day)
+        const nextDay = DAYS[dayIndex + 1]
+
+        if (nextDay) {
+          const nextDate = getDayDate(weekStart, dayIndex + 1)
+          return setMealPlanSlot(nextDate, 'Lunch', meal.id)
+        }
+      }
+
+      return true
+    }, 'Could not update leftover status.', { closeModals: false })
   }
 
   async function handleMealStatus(day, slot, status) {
+    if (plannerBusy) return
+
     const date = getDayDate(weekStart, DAYS.indexOf(day))
-    setMealStatus(date, slot, status)
-    await loadData()
+    await runPlannerMutation(() => {
+      setMealStatus(date, slot, status)
+      return true
+    }, 'Could not update meal status.', { closeModals: false })
   }
 
   /* ── Derived values ── */
@@ -476,6 +528,9 @@ export default function DashboardPage() {
   ──────────────────────────────────────────────────────────────────────────── */
   return (
     <div data-qa="dashboard-page" style={{ padding: '24px 28px', maxWidth: 1320, margin: '0 auto' }}>
+      <div data-qa="dashboard-planner-state" style={{ display: 'none' }}>{plannerBusy ? 'busy' : 'idle'}</div>
+      <div data-qa="dashboard-active-day" style={{ display: 'none' }}>{activeDay}</div>
+      <div data-qa="dashboard-day-calories" style={{ display: 'none' }}>{Math.round(activeDayStats.calories || 0)}</div>
 
       {/* ── Header strip ── */}
       <div className="t-fade-1" style={{
@@ -506,9 +561,12 @@ export default function DashboardPage() {
 
           <button
             data-qa="dashboard-grocery-open"
-            onClick={() => setShowGrocery(true)}
+            onClick={() => {
+              if (!plannerBusy) setShowGrocery(true)
+            }}
+            disabled={plannerBusy}
             className="t-btn-ghost"
-            style={{ borderRadius: 99, padding: '9px 18px', fontSize: 13, fontWeight: 700 }}
+            style={{ borderRadius: 99, padding: '9px 18px', fontSize: 13, fontWeight: 700, opacity: plannerBusy ? 0.55 : 1, cursor: plannerBusy ? 'default' : 'pointer' }}
           >
             Grocery List
           </button>
@@ -516,9 +574,9 @@ export default function DashboardPage() {
           <button
             data-qa="dashboard-auto-plan"
             onClick={handleAutoPlan}
-            disabled={autoPlanning || !recipes.length}
+            disabled={plannerBusy || !recipes.length}
             className="t-btn-ghost"
-            style={{ opacity: autoPlanning || !recipes.length ? 0.5 : 1, borderRadius: 99, padding: '9px 18px', fontSize: 13, fontWeight: 700 }}
+            style={{ opacity: plannerBusy || !recipes.length ? 0.5 : 1, borderRadius: 99, padding: '9px 18px', fontSize: 13, fontWeight: 700 }}
           >
             {autoPlanning ? 'Planning…' : 'Auto-plan'}
           </button>
@@ -792,7 +850,7 @@ export default function DashboardPage() {
             <div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
                 {activeDayMeals.map(({ slot, meal }) => (
-                  <div data-qa={`meal-card-${qaSlug(activeDay)}-${qaSlug(slot)}`} key={slot} className="dashboard-card" style={{ padding: 0, overflow: 'hidden', minHeight: 248, opacity: mealMetaMap[`${activeDay}-${slot}`]?.leftovers ? 0.6 : 1, transition: 'opacity 0.2s' }}>
+                  <div data-qa={`meal-card-${getMealSlotQa(activeDay, slot)}`} key={slot} className="dashboard-card" style={{ padding: 0, overflow: 'hidden', minHeight: 248, opacity: mealMetaMap[`${activeDay}-${slot}`]?.leftovers ? 0.6 : 1, transition: 'opacity 0.2s' }}>
                     {meal ? (
                       <>
                         <div style={{ position: 'relative' }}>
@@ -802,37 +860,41 @@ export default function DashboardPage() {
                             <div style={{ width: '100%', height: 128, background: cuisineGradient(meal.cuisine), display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28 }}>🍽</div>
                           )}
                           <span style={{ position: 'absolute', top: 10, left: 10, background: 'rgba(10,10,15,0.78)', color: T.textSec, fontSize: 10, padding: '4px 8px', borderRadius: 99, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' }}>{slot}</span>
-                          <button data-qa={`meal-clear-${qaSlug(activeDay)}-${qaSlug(slot)}`} onClick={() => handleClearMeal(activeDay, slot)} disabled={savingSlot} style={{ position: 'absolute', top: 10, right: 10, width: 28, height: 28, borderRadius: 99, border: 'none', background: 'rgba(10,10,15,0.78)', color: T.textSec, cursor: 'pointer', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+                          <button data-qa={`meal-clear-${getMealSlotQa(activeDay, slot)}`} onClick={() => handleClearMeal(activeDay, slot)} disabled={plannerBusy} style={{ position: 'absolute', top: 10, right: 10, width: 28, height: 28, borderRadius: 99, border: 'none', background: 'rgba(10,10,15,0.78)', color: T.textSec, cursor: plannerBusy ? 'default' : 'pointer', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: plannerBusy ? 0.6 : 1 }}>✕</button>
                         </div>
                         <div style={{ padding: '18px 20px 20px' }}>
-                          <div data-qa="meal-card-title" className="dashboard-card-title" style={{ marginBottom: 10 }}>{meal.title}</div>
+                          <div data-qa={`meal-slot-title-${getMealSlotQa(activeDay, slot)}`} className="dashboard-card-title" style={{ marginBottom: 10 }}>{meal.title}</div>
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
                             <Pill color="green">{meal.prep_time + meal.cook_time} min</Pill>
                             <Pill color="purple">{meal.protein}g</Pill>
                             <Pill color="amber">€{Number(meal.cost_estimate || 0).toFixed(2)}</Pill>
                           </div>
+                          <div data-qa={`meal-slot-state-${getMealSlotQa(activeDay, slot)}`} style={{ display: 'none' }}>
+                            {mealMetaMap[`${activeDay}-${slot}`]?.status || 'planned'}|{mealMetaMap[`${activeDay}-${slot}`]?.leftovers ? 'leftovers' : 'fresh'}
+                          </div>
                           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
-                            <button data-qa={`meal-leftovers-${qaSlug(activeDay)}-${qaSlug(slot)}`} onClick={() => handleToggleLeftover(activeDay, slot, meal)} style={{ padding: '6px 10px', borderRadius: 99, border: 'none', background: mealMetaMap[`${activeDay}-${slot}`]?.leftovers ? 'rgba(245,158,11,0.12)' : T.s2, color: mealMetaMap[`${activeDay}-${slot}`]?.leftovers ? T.amber : T.textSec, cursor: 'pointer', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <button data-qa={`meal-leftovers-${getMealSlotQa(activeDay, slot)}`} onClick={() => handleToggleLeftover(activeDay, slot, meal)} disabled={plannerBusy} style={{ padding: '6px 10px', borderRadius: 99, border: 'none', background: mealMetaMap[`${activeDay}-${slot}`]?.leftovers ? 'rgba(245,158,11,0.12)' : T.s2, color: mealMetaMap[`${activeDay}-${slot}`]?.leftovers ? T.amber : T.textSec, cursor: plannerBusy ? 'default' : 'pointer', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4, opacity: plannerBusy ? 0.6 : 1 }}>
                               {mealMetaMap[`${activeDay}-${slot}`]?.leftovers ? <>Leftovers <span style={{fontSize:12}}>⤿</span></> : 'Leftovers'}
                             </button>
-                            <button data-qa={`meal-cooked-${qaSlug(activeDay)}-${qaSlug(slot)}`} onClick={() => handleMealStatus(activeDay, slot, 'cooked')} style={{ padding: '6px 10px', borderRadius: 99, border: 'none', background: mealMetaMap[`${activeDay}-${slot}`]?.status === 'cooked' ? 'rgba(0,255,133,0.12)' : T.s2, color: mealMetaMap[`${activeDay}-${slot}`]?.status === 'cooked' ? T.green : T.textSec, cursor: 'pointer', fontSize: 10, fontWeight: 700 }}>
+                            <button data-qa={`meal-cooked-${getMealSlotQa(activeDay, slot)}`} onClick={() => handleMealStatus(activeDay, slot, 'cooked')} disabled={plannerBusy} style={{ padding: '6px 10px', borderRadius: 99, border: 'none', background: mealMetaMap[`${activeDay}-${slot}`]?.status === 'cooked' ? 'rgba(0,255,133,0.12)' : T.s2, color: mealMetaMap[`${activeDay}-${slot}`]?.status === 'cooked' ? T.green : T.textSec, cursor: plannerBusy ? 'default' : 'pointer', fontSize: 10, fontWeight: 700, opacity: plannerBusy ? 0.6 : 1 }}>
                               Cooked
                             </button>
-                            <button data-qa={`meal-skipped-${qaSlug(activeDay)}-${qaSlug(slot)}`} onClick={() => handleMealStatus(activeDay, slot, 'skipped')} style={{ padding: '6px 10px', borderRadius: 99, border: 'none', background: mealMetaMap[`${activeDay}-${slot}`]?.status === 'skipped' ? 'rgba(248,113,113,0.12)' : T.s2, color: mealMetaMap[`${activeDay}-${slot}`]?.status === 'skipped' ? T.red : T.textSec, cursor: 'pointer', fontSize: 10, fontWeight: 700 }}>
+                            <button data-qa={`meal-skipped-${getMealSlotQa(activeDay, slot)}`} onClick={() => handleMealStatus(activeDay, slot, 'skipped')} disabled={plannerBusy} style={{ padding: '6px 10px', borderRadius: 99, border: 'none', background: mealMetaMap[`${activeDay}-${slot}`]?.status === 'skipped' ? 'rgba(248,113,113,0.12)' : T.s2, color: mealMetaMap[`${activeDay}-${slot}`]?.status === 'skipped' ? T.red : T.textSec, cursor: plannerBusy ? 'default' : 'pointer', fontSize: 10, fontWeight: 700, opacity: plannerBusy ? 0.6 : 1 }}>
                               Skipped
                             </button>
                           </div>
                           <div style={{ display: 'flex', gap: 8 }}>
-                            <button data-qa={`meal-cook-${qaSlug(activeDay)}-${qaSlug(slot)}`} onClick={() => navigate(`/cook/${meal.id}`)} style={{ flex: 1, height: 38, borderRadius: 10, border: 'none', background: T.green, color: '#000', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}>Cook</button>
-                            <button data-qa={`meal-swap-${qaSlug(activeDay)}-${qaSlug(slot)}`} onClick={() => handleSwapMeal(activeDay, slot, meal)} style={{ minWidth: 74, height: 38, borderRadius: 10, border: `1px solid ${T.border}`, background: 'transparent', color: T.textSec, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Swap</button>
+                            <button data-qa={`meal-cook-${getMealSlotQa(activeDay, slot)}`} onClick={() => navigate(`/cook/${meal.id}`)} style={{ flex: 1, height: 38, borderRadius: 10, border: 'none', background: T.green, color: '#000', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}>Cook</button>
+                            <button data-qa={`meal-swap-${getMealSlotQa(activeDay, slot)}`} onClick={() => handleSwapMeal(activeDay, slot, meal)} disabled={plannerBusy} style={{ minWidth: 74, height: 38, borderRadius: 10, border: `1px solid ${T.border}`, background: 'transparent', color: T.textSec, fontSize: 12, fontWeight: 600, cursor: plannerBusy ? 'default' : 'pointer', opacity: plannerBusy ? 0.6 : 1 }}>Swap</button>
                           </div>
                         </div>
                       </>
                     ) : (
                       <div style={{ height: '100%', minHeight: 248, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', padding: '24px 28px', textAlign: 'center', background: 'transparent' }}>
                         <div className="dashboard-section-label" style={{ marginBottom: 10 }}>{slot}</div>
+                        <div data-qa={`meal-slot-empty-${getMealSlotQa(activeDay, slot)}`} style={{ display: 'none' }}>empty</div>
                         <div style={{ fontSize: 22, marginBottom: 12, color: T.border }}>+</div>
-                        <button data-qa={`dashboard-add-meal-${qaSlug(activeDay)}-${qaSlug(slot)}`} onClick={() => setShowPicker({ day: activeDay, slot })} style={{ padding: '8px 14px', borderRadius: 99, border: 'none', background: T.s2, color: T.textSec, cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
+                        <button data-qa={`dashboard-add-meal-${getMealSlotQa(activeDay, slot)}`} onClick={() => setShowPicker({ day: activeDay, slot })} disabled={plannerBusy} style={{ padding: '8px 14px', borderRadius: 99, border: 'none', background: T.s2, color: T.textSec, cursor: plannerBusy ? 'default' : 'pointer', fontSize: 12, fontWeight: 700, opacity: plannerBusy ? 0.6 : 1 }}>
                           Add meal
                         </button>
                       </div>
@@ -971,8 +1033,8 @@ export default function DashboardPage() {
               <button onClick={() => setShowPicker(null)} style={{ border: `1px solid ${T.border}`, background: 'transparent', color: T.text, width: 32, height: 32, borderRadius: 999, cursor: 'pointer' }}>✕</button>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, marginBottom: 14 }}>
-              <input data-qa="meal-picker-search" value={pickerSearch} onChange={(e) => setPickerSearch(e.target.value)} placeholder="Search recipes…" className="t-input" style={{ width: '100%' }} />
-              <select data-qa="meal-picker-sort" value={pickerSort} onChange={(e) => setPickerSort(e.target.value)} className="t-input" style={{ width: '100%' }}>
+              <input data-qa="meal-picker-search" value={pickerSearch} onChange={(e) => setPickerSearch(e.target.value)} placeholder="Search recipes…" className="t-input" style={{ width: '100%' }} disabled={plannerBusy} />
+              <select data-qa="meal-picker-sort" value={pickerSort} onChange={(e) => setPickerSort(e.target.value)} className="t-input" style={{ width: '100%' }} disabled={plannerBusy}>
                 <option value="fridge-match">Fridge match</option>
                 <option value="protein">Protein</option>
                 <option value="quickest">Quickest</option>
@@ -982,7 +1044,7 @@ export default function DashboardPage() {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {pickerRecipes.map((recipe) => (
-                <button data-qa={`meal-picker-option-${qaSlug(recipe.title)}`} key={recipe.id} onClick={() => handlePickMeal(showPicker.day, showPicker.slot, recipe)} disabled={savingSlot} style={{ display: 'flex', gap: 12, alignItems: 'center', width: '100%', textAlign: 'left', padding: 12, borderRadius: 14, border: `1px solid ${T.border}`, background: T.surface, color: T.text, cursor: 'pointer', transition: 'border-color 0.15s' }}
+                <button data-qa={`meal-picker-option-${qaSlug(recipe.title)}`} key={recipe.id} onClick={() => handlePickMeal(showPicker.day, showPicker.slot, recipe)} disabled={plannerBusy} style={{ display: 'flex', gap: 12, alignItems: 'center', width: '100%', textAlign: 'left', padding: 12, borderRadius: 14, border: `1px solid ${T.border}`, background: T.surface, color: T.text, cursor: plannerBusy ? 'default' : 'pointer', transition: 'border-color 0.15s', opacity: plannerBusy ? 0.6 : 1 }}
                   onMouseEnter={(e) => e.currentTarget.style.borderColor = T.borderActive}
                   onMouseLeave={(e) => e.currentTarget.style.borderColor = T.border}>
                   {recipe.image_url
@@ -1022,18 +1084,20 @@ export default function DashboardPage() {
             {/* Filter tabs */}
             <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
               {['All', 'Fastest', 'Cheapest', 'Best Fit'].map((tab) => (
-                <button data-qa={`swap-filter-${qaSlug(tab)}`} key={tab} onClick={() => setSwapTab(tab)} style={{
+                <button data-qa={`swap-filter-${qaSlug(tab)}`} key={tab} onClick={() => setSwapTab(tab)} disabled={plannerBusy} style={{
                   padding: '6px 14px', borderRadius: 99, fontSize: 12, fontWeight: 700, cursor: 'pointer',
                   border: `1px solid ${swapTab === tab ? T.green : T.border}`,
                   background: swapTab === tab ? 'rgba(0,255,133,0.1)' : 'transparent',
                   color: swapTab === tab ? T.green : T.textSec,
                   transition: 'all 0.15s',
+                  opacity: plannerBusy ? 0.6 : 1,
+                  cursor: plannerBusy ? 'default' : 'pointer',
                 }}>{tab}</button>
               ))}
             </div>
             <div style={{ display: 'grid', gap: 12 }}>
               {(showSwap.alternatives || []).filter((item) => swapTab === 'All' || item.mode === swapTab).map((item) => (
-                <button data-qa={`swap-option-${qaSlug(item.mode)}-${qaSlug(item.recipe?.title)}`} key={`${item.mode}-${item.recipe?.id}`} onClick={() => handlePickMeal(showSwap.day, showSwap.slot, item.recipe)} style={{ width: '100%', textAlign: 'left', padding: 16, borderRadius: 16, border: `1px solid ${T.border}`, background: T.surface, color: T.text, cursor: 'pointer', transition: 'border-color 0.15s' }}
+                <button data-qa={`swap-option-${qaSlug(item.mode)}-${qaSlug(item.recipe?.title)}`} key={`${item.mode}-${item.recipe?.id}`} onClick={() => handlePickMeal(showSwap.day, showSwap.slot, item.recipe)} disabled={plannerBusy} style={{ width: '100%', textAlign: 'left', padding: 16, borderRadius: 16, border: `1px solid ${T.border}`, background: T.surface, color: T.text, cursor: plannerBusy ? 'default' : 'pointer', transition: 'border-color 0.15s', opacity: plannerBusy ? 0.6 : 1 }}
                   onMouseEnter={(e) => e.currentTarget.style.borderColor = T.borderActive}
                   onMouseLeave={(e) => e.currentTarget.style.borderColor = T.border}>
                   <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>{item.mode}</div>
@@ -1120,8 +1184,12 @@ export default function DashboardPage() {
             </div>
 
             <div style={{ flex: 1, overflowY: 'auto', padding: '16px 22px' }}>
-              {groceryList.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '32px 12px', color: T.textSec, fontSize: 14 }}>
+              {plannerBusy ? (
+                <div data-qa="grocery-loading-state" style={{ textAlign: 'center', padding: '32px 12px', color: T.textSec, fontSize: 14 }}>
+                  Refreshing grocery list...
+                </div>
+              ) : groceryList.length === 0 ? (
+                <div data-qa="grocery-empty-state" style={{ textAlign: 'center', padding: '32px 12px', color: T.textSec, fontSize: 14 }}>
                   No meals planned this week yet. Add meals to the planner first.
                 </div>
               ) : (() => {

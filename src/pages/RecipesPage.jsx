@@ -152,7 +152,7 @@ export default function RecipesPage() {
         <div>
           <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: T.textMuted, marginBottom: 6 }}>Recipe Library</div>
           <h1 style={{ fontSize: 30, fontWeight: 800, margin: '0 0 6px', letterSpacing: '-0.03em', color: T.text }}>My Recipes</h1>
-          <div style={{ color: T.textSec, fontSize: 14 }}>
+          <div data-qa="recipes-summary" style={{ color: T.textSec, fontSize: 14 }}>
             {loading ? 'Loading recipes…' : `${visibleRecipes.length} recipes shown`}
             {!!fridgeIngredients.length && (
               <span style={{ color: T.amber }}> · ranked against {fridgeIngredients.length} fridge ingredients</span>
@@ -210,7 +210,7 @@ export default function RecipesPage() {
 
       {/* ── Grid ── */}
       {loading ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: 16 }}>
+        <div data-qa="recipes-loading" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: 16 }}>
           {[1, 2, 3, 4, 5, 6].map((item) => <SkeletonCard key={item} />)}
         </div>
       ) : !visibleRecipes.length ? (

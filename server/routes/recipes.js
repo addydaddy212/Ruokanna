@@ -895,12 +895,14 @@ Rules:
       })
 
       const normalizedPlan = {}
+      const fallbackPlan = buildFallbackAutoPlan(recipeCatalog, dayCount, goal)
 
       DAYS.slice(0, dayCount).forEach((day) => {
         normalizedPlan[day] = {}
         SLOTS.forEach((slot) => {
           const recipeId = plan?.[day]?.[slot]
-          normalizedPlan[day][slot] = allowedIds.has(String(recipeId)) ? String(recipeId) : null
+          const normalizedId = allowedIds.has(String(recipeId)) ? String(recipeId) : null
+          normalizedPlan[day][slot] = normalizedId || fallbackPlan?.[day]?.[slot] || null
         })
       })
 

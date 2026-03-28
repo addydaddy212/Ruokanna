@@ -5,6 +5,7 @@ import { useAuth } from './useAuth'
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 const PROFILE_META_PREFIX = 'ruokanna-profile-meta'
 const MEAL_META_PREFIX = 'ruokanna-meal-meta'
+let recipeInsertMode = 'unknown'
 const DEFAULT_PROFILE_META = {
   display_name: '',
   product_name_preference: 'ruokanna',
@@ -164,6 +165,11 @@ function formatSupabaseError(error) {
   }
 
   return message || 'Something went wrong while talking to Supabase.'
+}
+
+function shouldFallbackRecipeInsert(error) {
+  const message = error?.message || ''
+  return /column|schema cache|Could not find the column/i.test(message)
 }
 
 export function generateTags(recipe = {}) {
@@ -460,22 +466,31 @@ export function useRecipes() {
     let data = null
     let saveError = null
 
-    const extendedInsert = await supabase
-      .from('recipes')
-      .insert(extendedPayload)
-      .select()
-      .single()
+    if (recipeInsertMode !== 'base') {
+      const extendedInsert = await supabase
+        .from('recipes')
+        .insert(extendedPayload)
+        .select()
+        .single()
 
-    data = extendedInsert.data
-    saveError = extendedInsert.error
+      data = extendedInsert.data
+      saveError = extendedInsert.error
 
-    if (saveError && /column|schema cache|Could not find the column/i.test(saveError.message || '')) {
+      if (!saveError) {
+        recipeInsertMode = 'extended'
+      } else if (!shouldFallbackRecipeInsert(saveError)) {
+        recipeInsertMode = 'extended'
+      }
+    }
+
+    if (recipeInsertMode === 'base' || (saveError && shouldFallbackRecipeInsert(saveError))) {
       const baseInsert = await supabase
         .from('recipes')
         .insert(basePayload)
         .select()
         .single()
 
+      recipeInsertMode = 'base'
       data = baseInsert.data
       saveError = baseInsert.error
     }
@@ -551,7 +566,7 @@ export function useRecipes() {
 
     const { data, error: queryError } = await supabase
       .from('meal_plan')
-      .select('*, recipes(*)')
+      .select('*, recipes(*, ingredients(*), steps(*))')
       .eq('user_id', user.id)
       .gte('date', weekStart)
       .lte('date', endDate)

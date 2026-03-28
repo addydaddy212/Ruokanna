@@ -328,7 +328,7 @@ export default function AddRecipePage() {
         <div>
           <div data-qa="recipe-preview" style={{ ...glassCardStyle, borderRadius: 22, padding: 24, marginBottom: 20 }}>
             {preview.image_url && <img src={preview.image_url} alt={preview.title} style={{ width: '100%', height: 240, objectFit: 'cover', borderRadius: 16, marginBottom: 18 }} />}
-            <h2 style={{ fontSize: 26, fontWeight: 800, margin: '0 0 8px' }}>{preview.title}</h2>
+            <h2 data-qa="recipe-preview-title" style={{ fontSize: 26, fontWeight: 800, margin: '0 0 8px' }}>{preview.title}</h2>
             <p style={{ color: '#9CA3AF', fontSize: 15, lineHeight: 1.6, margin: '0 0 16px' }}>{preview.description}</p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 18 }}>
               <StatusChip label={preview.source_label || (preview.source_type || 'unknown').replace(/-/g, ' ')} type="source" />

@@ -117,6 +117,11 @@ export default function MacrosPage() {
   const activeStats = weeklyData.days.find((day) => day.day === activeDay) || { calories: 0, protein: 0, carbs: 0, fat: 0, cost: 0 }
   return (
     <div data-qa="macros-page" style={{ padding: 28, maxWidth: 1000, margin: '0 auto' }}>
+      <div data-qa="macro-current-goal" style={{ display: 'none' }}>{goal}</div>
+      <div data-qa="macro-target-calories" style={{ display: 'none' }}>{targets.calories}</div>
+      <div data-qa="macro-target-protein" style={{ display: 'none' }}>{profile.protein_target || targets.protein}</div>
+      <div data-qa="macro-target-carbs" style={{ display: 'none' }}>{profile.carb_target || targets.carbs}</div>
+      <div data-qa="macro-target-fat" style={{ display: 'none' }}>{profile.fat_target || targets.fat}</div>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginBottom: 24 }}>
         <div>
           <h1 style={{ fontSize: 30, fontWeight: 800, margin: '0 0 8px' }}>Macro Autopilot</h1>

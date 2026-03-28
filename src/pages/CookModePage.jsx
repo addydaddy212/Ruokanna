@@ -1,10 +1,15 @@
 import { useState, useEffect, useRef } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useRecipes } from '../hooks/useRecipes.js'
+
+function isRecipeDetailPath(pathname = '') {
+  return /^\/recipes\/[^/]+$/.test(pathname)
+}
 
 export default function CookModePage() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
   const { fetchRecipeById } = useRecipes()
   const [recipe, setRecipe] = useState(null)
   const [step, setStep] = useState(0)
@@ -41,6 +46,21 @@ export default function CookModePage() {
   }, [running, timeLeft])
 
   const fmt = s => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
+  const fromPath = location.state?.fromPath || ''
+
+  function handleBackPage() {
+    if (isRecipeDetailPath(fromPath)) {
+      navigate(fromPath)
+      return
+    }
+
+    if (recipe?.id) {
+      navigate(`/recipes/${recipe.id}`)
+      return
+    }
+
+    navigate('/recipes')
+  }
 
   if (!loaded) return <div data-qa="cook-mode-loading" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', color: '#555' }}>Loading...</div>
   if (!recipe) return (
@@ -73,7 +93,7 @@ export default function CookModePage() {
 
   return (
     <div data-qa="cook-mode-page" style={{ minHeight: '100vh', background: '#000000', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 32 }}>
-      <button data-qa="cook-back-page" onClick={() => navigate(-1)} style={{ position: 'fixed', top: 20, left: 20, background: '#1A1A1A', border: '1px solid #2A2A2A', color: '#888', borderRadius: 8, padding: '8px 16px', cursor: 'pointer', fontFamily: 'inherit' }}>← Back</button>
+      <button data-qa="cook-back-page" onClick={handleBackPage} style={{ position: 'fixed', top: 20, left: 20, background: '#1A1A1A', border: '1px solid #2A2A2A', color: '#888', borderRadius: 8, padding: '8px 16px', cursor: 'pointer', fontFamily: 'inherit' }}>← Back</button>
       
       {/* AI Sous Chef Floating Action */}
       <button 

@@ -44,11 +44,11 @@ export default function RecipeDetailPage() {
   )
 
   return (
-    <div style={{ padding: 28, maxWidth: 680, margin: '0 auto' }}>
+    <div data-qa="recipe-detail-page" style={{ padding: 28, maxWidth: 680, margin: '0 auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24 }}>
         <button onClick={() => navigate('/recipes')} style={{ background: 'none', border: 'none', color: '#555', fontSize: 20, cursor: 'pointer' }}>←</button>
         <h1 style={{ fontSize: 24, fontWeight: 800, margin: 0, flex: 1 }}>{recipe.title}</h1>
-        <button data-qa="recipe-detail-cook-now" onClick={() => navigate(`/cook/${recipe.id}`)} style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: '#00FF85', color: '#000', fontWeight: 700, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit' }}>Cook Now</button>
+        <button data-qa="recipe-detail-cook-now" onClick={() => navigate(`/cook/${recipe.id}`, { state: { fromPath: `/recipes/${recipe.id}` } })} style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: '#00FF85', color: '#000', fontWeight: 700, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit' }}>Cook Now</button>
       </div>
       {recipe.image_url && <img src={recipe.image_url} alt={recipe.title} style={{ width: '100%', height: 280, objectFit: 'cover', borderRadius: 16, marginBottom: 20 }} />}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 20 }}>
